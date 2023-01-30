@@ -24,7 +24,7 @@ namespace sockets {
 			: _sockedFd(0)
 			, _remoteEndPoint(std::move(endPoint))
 			, _recvTimeout(0)
-			, _beginReceiveHandler() {
+			/*, _beginReceiveHandler()*/ {
 
 	}
 
@@ -56,7 +56,7 @@ namespace sockets {
 #else
     return errno;
 #endif
-	}
+        }
 
 	/*static*/const std::error_category& BaseSocket::getErrorCategory() noexcept
 	{
@@ -65,7 +65,7 @@ namespace sockets {
 #else
     return std::generic_category();
 #endif
-	}
+        }
 
 	int BaseSocket::getSocketFd() const {
 		return _sockedFd;
@@ -82,8 +82,8 @@ namespace sockets {
                 uint32_t ms = recvTimeout.count();
                 setsockopt(_sockedFd, SOL_SOCKET, SO_RCVTIMEO, (const char*)&ms, sizeof ms);
 #else
-                timeval tv = makePortableInterval(recvTimeout);
-                setsockopt(_sockedFd, SOL_SOCKET, SO_RCVTIMEO, (const char*)&tv, sizeof tv);
+		timeval tv = makePortableInterval(recvTimeout);
+		setsockopt(_sockedFd, SOL_SOCKET, SO_RCVTIMEO, (const char*)&tv, sizeof tv);
 #endif
 
 	}
@@ -105,18 +105,18 @@ namespace sockets {
 		};
 
 		tv.tv_sec = std::max<decltype(tv.tv_sec)>(tv.tv_sec, 0);
-    tv.tv_usec = std::max<decltype(tv.tv_usec)>(tv.tv_usec, 0);
+		tv.tv_usec = std::max<decltype(tv.tv_usec)>(tv.tv_usec, 0);
 		return tv;
 	}
 
-	void BaseSocket::setBeginReceiveHandler(BaseSocket::BeginReceiveHandler handler) {
-		_beginReceiveHandler = std::move(handler);
-	}
+//	void BaseSocket::setBeginReceiveHandler(BaseSocket::BeginReceiveHandler handler) {
+//		_beginReceiveHandler = std::move(handler);
+//	}
 
-	void BaseSocket::BeginReceive() {
-		_beginReceiveHandler(*this);
-	}
-
+//	void BaseSocket::BeginReceive() {
+//		_beginReceiveHandler(*this);
+//	}
+/*
 	void BaseSocket::select(std::vector<BaseSocket::SPtr> sockets, std::chrono::milliseconds timeout) {
 		BaseSocket::SPtr socketWithMaxFd = *std::max_element(sockets.begin(), sockets.end(), [](auto sock1, auto sock2) {
 			return sock1->getSocketFd() < sock2->getSocketFd();
@@ -149,7 +149,7 @@ namespace sockets {
 			startTime = std::chrono::steady_clock::now();
 		} while(ready > 0);
 	}
-
+*/
 	const EndPoint &BaseSocket::getRemoteEndPoint() const {
 		return _remoteEndPoint;
 	}

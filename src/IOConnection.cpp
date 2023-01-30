@@ -41,6 +41,7 @@ namespace eipScanner {
 			, _originatorVendorId{0}
 			, _originatorSerialNumber{0}
 			, _outputData()
+			, _remoteEndPoint("", 0)
 			, _receiveDataHandle([](auto, auto, auto) {})
 			, _closeHandle([]() {})
 			, _sendDataHandle([](auto) {})
@@ -81,9 +82,11 @@ namespace eipScanner {
 
 		std::vector<uint8_t> ioData(data.begin() + buffer.pos(), data.end());
 		if (_t2oFixedSize && ioData.size() != _t2oDataSize) {
-			Logger(LogLevel::WARNING) << "Connection T2O_ID=" << _t2oNetworkConnectionId
-				<< " has fixed size " << _t2oDataSize << " bytes but " << ioData.size()
-				<< " bytes were received. Ignore this data.";
+			if (ioData.size() > 0) {
+				Logger(LogLevel::WARNING) << "Connection T2O_ID=" << std::hex << _t2oNetworkConnectionId
+					<< " has fixed size " << _t2oDataSize << " bytes but " << ioData.size()
+					<< " bytes were received. Ignore this data.";
+			}
 		} else {
 			_connectionTimeoutCount = 0;
 			_receiveDataHandle(runtimeHeader, sequenceValueCount,
@@ -99,7 +102,8 @@ namespace eipScanner {
 		auto periodInMicroS = sinceLastHandle.count() * 1000;
 		_connectionTimeoutCount += periodInMicroS;
 		if (_connectionTimeoutCount > _connectionTimeoutMultiplier * _t2oAPI) {
-			Logger(LogLevel::WARNING) << "Connection SeriaNumber=" << _serialNumber << " is closed by timeout";
+			Logger(LogLevel::WARNING) << "Connection SerialNumber=" << _serialNumber << " is closed by timeout";
+			_serverSocket.reset();
 			_closeHandle();
 			return false;
 		}
@@ -134,7 +138,7 @@ namespace eipScanner {
 				buffer << _outputData;
 				commonPacket << factory.createConnectedDataItem(buffer.data());
 
-				_socket->Send(commonPacket.pack());
+				_serverSocket->SendTo(commonPacket.pack(), _remoteEndPoint);
 			}
 		}
 

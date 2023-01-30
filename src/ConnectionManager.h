@@ -75,11 +75,12 @@ namespace eipScanner {
 		bool hasOpenConnections() const;
 	private:
 		MessageRouter::SPtr _messageRouter;
-		std::map<cip::CipUint, IOConnection::SPtr> _connectionMap;
-		std::map<sockets::EndPoint, std::shared_ptr<sockets::UDPBoundSocket>> _socketMap;
+		static std::map<cip::CipUint, IOConnection::SPtr> _connectionMap;
 
-		sockets::UDPBoundSocket::SPtr  findOrCreateSocket(const sockets::EndPoint& endPoint);
+		sockets::UDPBoundSocket::SPtr findOrCreateSocket(const sockets::EndPoint& endPoint);
 		cip::CipUint _incarnationId;
+
+		static sockets::UDPBoundSocket::SPtr _udpServerSocket;
 	};
 }
 

@@ -34,14 +34,15 @@ namespace eipScanner {
 		FORWARD_CLOSE = 0x4E
 	};
 
+	sockets::UDPBoundSocket::SPtr ConnectionManager::_udpServerSocket{};
+	std::map<cip::CipUint, IOConnection::SPtr> ConnectionManager::_connectionMap{};
+
 	ConnectionManager::ConnectionManager()
 		: ConnectionManager(std::make_shared<MessageRouter>()){
 	}
 
 	ConnectionManager::ConnectionManager(const MessageRouter::SPtr& messageRouter)
-		: _messageRouter(messageRouter)
-		, _connectionMap(){
-
+		: _messageRouter(messageRouter){
 		std::random_device rd;
 		std::uniform_int_distribution<cip::CipUint> dist(0, std::numeric_limits<cip::CipUint>::max());
 		_incarnationId = dist(rd);
@@ -105,9 +106,9 @@ namespace eipScanner {
 			ForwardOpenResponse response;
 			response.expand(messageRouterResponse.getData());
 
-			Logger(LogLevel::INFO) << "Open IO connection O2T_ID=" << response.getO2TNetworkConnectionId()
-				<< " T2O_ID=" << response.getT2ONetworkConnectionId()
-				<< " SerialNumber " << response.getConnectionSerialNumber();
+			Logger(LogLevel::INFO) << "Open IO connection O2T_ID=" << std::hex << response.getO2TNetworkConnectionId()
+				<< " T2O_ID=" << std::hex << response.getT2ONetworkConnectionId()
+				<< " SerialNumber " << std::hex << response.getConnectionSerialNumber();
 
 			ioConnection.reset(new IOConnection());
 			ioConnection->_o2tNetworkConnectionId = response.getO2TNetworkConnectionId();
@@ -138,26 +139,38 @@ namespace eipScanner {
 				sockAddrBuffer >> endPoint;
 
 				if (endPoint.getHost() == "0.0.0.0") {
-					ioConnection->_socket = std::make_unique<UDPSocket>(
-							si->getRemoteEndPoint().getHost(), endPoint.getPort());
+//					ioConnection->_serverSocket = std::make_unique<UDPSocket>(
+//							si->getRemoteEndPoint().getHost(), endPoint.getPort());
+				    auto socket = findOrCreateSocket(sockets::EndPoint(si->getRemoteEndPoint().getHost(), endPoint.getPort()));
+				    ioConnection->_serverSocket = std::make_unique<UDPSocket>(*socket.get());
+				    fprintf(stderr, "%s: %d,  ********************************************\n", __FILE__, __LINE__);
 				} else {
-					ioConnection->_socket = std::make_unique<UDPSocket>(endPoint);
+					ioConnection->_serverSocket = std::make_unique<UDPSocket>(endPoint);
 				}
-
+				// findOrCreateSocket(sockets::EndPoint(si->getRemoteEndPoint().getHost(), EIP_DEFAULT_IMPLICIT_PORT));
+				sockets::EndPoint remoteEndPoint(si->getRemoteEndPoint().getHost(), EIP_DEFAULT_IMPLICIT_PORT);
+				findOrCreateSocket(remoteEndPoint);
+				ioConnection->_remoteEndPoint = remoteEndPoint;
 			} else {
-				ioConnection->_socket = std::make_unique<UDPSocket>(si->getRemoteEndPoint().getHost(), EIP_DEFAULT_IMPLICIT_PORT);
+				sockets::EndPoint remoteEndPoint(si->getRemoteEndPoint().getHost(), EIP_DEFAULT_IMPLICIT_PORT);
+				auto socket = findOrCreateSocket(remoteEndPoint);
+				ioConnection->_serverSocket = std::make_unique<UDPSocket>(*socket.get());
+				ioConnection->_remoteEndPoint = remoteEndPoint;
+//			    auto socket = findOrCreateSocket(sockets::EndPoint(si->getRemoteEndPoint().getHost(), EIP_DEFAULT_IMPLICIT_PORT));
+//			    ioConnection->_serverSocket = std::make_unique<UDPSocket>(*socket.get());
+//				// ioConnection->_socket = std::make_unique<UDPSocket>(si->getRemoteEndPoint().getHost(), EIP_DEFAULT_IMPLICIT_PORT);
 			}
 
 			Logger(LogLevel::INFO) << "Open UDP socket to send data to "
-					<< ioConnection->_socket->getRemoteEndPoint().toString();
+					<< ioConnection->_serverSocket->getRemoteEndPoint().toString();
 
-			findOrCreateSocket(sockets::EndPoint(si->getRemoteEndPoint().getHost(), EIP_DEFAULT_IMPLICIT_PORT));
+//			findOrCreateSocket(sockets::EndPoint(si->getRemoteEndPoint().getHost(), EIP_DEFAULT_IMPLICIT_PORT));
 
 			auto result = _connectionMap
 					.insert(std::make_pair(response.getT2ONetworkConnectionId(), ioConnection));
 			if (!result.second) {
 				Logger(LogLevel::ERROR)
-					<< "Connection with T2O_ID=" << response.getT2ONetworkConnectionId()
+					<< "Connection with T2O_ID=" << std::hex << response.getT2ONetworkConnectionId()
 					<< " already exists.";
 			}
 		} else {
@@ -181,7 +194,7 @@ namespace eipScanner {
 			request.setOriginatorVendorId(ptr->_originatorVendorId);
 			request.setOriginatorSerialNumber(ptr->_originatorSerialNumber);
 
-			Logger(LogLevel::INFO) << "Close connection connection T2O_ID="
+			Logger(LogLevel::INFO) << "Close connection T2O_ID=" << std::hex
 					<< ptr->_t2oNetworkConnectionId;
 
 			auto messageRouterResponse = _messageRouter->sendRequest(si,
@@ -205,14 +218,28 @@ namespace eipScanner {
 	}
 
 	void ConnectionManager::handleConnections(std::chrono::milliseconds timeout) {
-		std::vector<BaseSocket::SPtr > sockets;
-		std::transform(_socketMap.begin(), _socketMap.end(), std::back_inserter(sockets), [](auto entry) {
-			auto fd = entry.second->getSocketFd();
-			(void) fd;
-			return entry.second;
+		UDPSocket::select(_udpServerSocket, timeout, [this](std::vector<uint8_t> recvData){
+			CommonPacket commonPacket;
+			commonPacket.expand(recvData);
+			fprintf(stderr, "%s: %d, notifyReceiveData size: %d (socket fd=%d)\n", __FILE__, __LINE__, recvData.size(), _udpServerSocket->getSocketFd());
+			// TODO: Check TypeIDs and sequence of the packages
+			Buffer buffer(commonPacket.getItems().at(0).getData());
+			cip::CipUdint connectionId;
+			buffer >> connectionId;
+			Logger(LogLevel::DEBUG) << "Received data from connection T2O_ID=" << std::hex << connectionId;
+			auto io = _connectionMap.find(connectionId);
+			if (io != _connectionMap.end()) {
+				io->second->notifyReceiveData(commonPacket.getItems().at(1).getData());
+				Logger(LogLevel::ERROR) << "Received data from connection T2O_ID=" << std::hex
+							<< connectionId;
+			} else {
+				for (auto x : _connectionMap) {
+					fprintf(stderr, "%s: %d,  0x%x\n", __FILE__, __LINE__, x.first);
+				}
+				Logger(LogLevel::ERROR) << "Received data from unknown connection T2O_ID=" << std::hex
+							<< connectionId;
+			}
 		});
-
-		BaseSocket::select(sockets, timeout);
 
 		std::vector<cip::CipUdint> connectionsToClose;
 		for (auto& entry : _connectionMap) {
@@ -227,38 +254,12 @@ namespace eipScanner {
 	}
 
 	UDPBoundSocket::SPtr ConnectionManager::findOrCreateSocket(const sockets::EndPoint& endPoint) {
-		auto socket = _socketMap.find(endPoint);
-		if (socket == _socketMap.end()) {
-			auto newSocket = std::make_shared<UDPBoundSocket>(endPoint);
-			_socketMap[endPoint] = newSocket;
-			newSocket->setBeginReceiveHandler([](sockets::BaseSocket& sock) {
-			  (void) sock;
-				Logger(LogLevel::DEBUG) << "Received something";
-			});
 
-			newSocket->setBeginReceiveHandler([this](BaseSocket& sock) {
-				auto recvData = sock.Receive(8192);
-				CommonPacket commonPacket;
-				commonPacket.expand(recvData);
-
-				// TODO: Check TypeIDs and sequence of the packages
-				Buffer buffer(commonPacket.getItems().at(0).getData());
-				cip::CipUdint connectionId;
-				buffer >> connectionId;
-				Logger(LogLevel::DEBUG) << "Received data from connection T2O_ID=" << connectionId;
-
-				auto io = _connectionMap.find(connectionId);
-				if (io != _connectionMap.end()) {
-					io->second->notifyReceiveData(commonPacket.getItems().at(1).getData());
-				} else {
-					Logger(LogLevel::ERROR) << "Received data from unknown connection T2O_ID=" << connectionId;
-				}
-			});
-
-			return newSocket;
+		if (!_udpServerSocket.get()) {
+		    _udpServerSocket = std::make_shared<UDPBoundSocket>("", EIP_DEFAULT_IMPLICIT_PORT);
 		}
 
-		return socket->second;
+		return _udpServerSocket;
 	}
 
 	bool ConnectionManager::hasOpenConnections() const {

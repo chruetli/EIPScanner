@@ -35,7 +35,7 @@ namespace sockets {
 #if defined(__unix__) || defined(__APPLE__)
 		if (inet_aton(_host.c_str(), &_addr.sin_addr) < 0) {
 #elif defined(_WIN32) || defined(WIN32) || defined(_WIN64)
-    if (inet_pton(AF_INET, _host.c_str(), &_addr.sin_addr.s_addr) < 0) {
+		if (inet_pton(AF_INET, _host.c_str(), &_addr.sin_addr.s_addr) < 0) {
 #endif
 			throw std::system_error(BaseSocket::getLastError(), BaseSocket::getErrorCategory());
 		}
@@ -66,8 +66,7 @@ namespace sockets {
 	}
 
 	bool EndPoint::operator< (const EndPoint& rhs) const {
-		return _host < rhs._host
-			   && _port < rhs._port;
+		return std::tie(_host, _port) < std::tie(rhs._host, rhs._port);
 	}
 
 	std::string EndPoint::toString() const {
